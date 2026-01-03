@@ -55,23 +55,34 @@ class SettlementPDF(FPDF):
         self.vendor_name = clean_text(vendor_name)
         self.week_str = week_str
 
-    def header(self):
+   def header(self):
+        # High-Visibility Watermark (using modern local_context)
         if os.path.exists('watermark.png'):
-            self.set_alpha(0.35)
-            self.image('watermark.png', x=55, y=100, w=100)
-            self.set_alpha(1.0)
+            try:
+                # fill_opacity 0.35 = 35% visible
+                with self.local_context(fill_opacity=0.35):
+                    self.image('watermark.png', x=55, y=100, w=100)
+            except AttributeError:
+                # If local_context isn't supported, it will just skip or draw solid
+                pass
 
         if self.page_no() == 1:
             if os.path.exists('logo.png'):
+                # Logo 70mm width (2x size)
                 self.image('logo.png', x=10, y=10, w=70)
+            
             self.set_y(15)
-            self.set_font("helvetica", 'I', 12)
-            self.cell(0, 8, text="VENDOR SETTLEMENT", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
             self.set_font("helvetica", 'B', 14)
-            self.cell(0, 6, text=self.vendor_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            self.cell(0, 8, text="VENDOR SETTLEMENT", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            self.set_font("helvetica", 'B', 11)
+            self.cell(0, 6, text=str(self.vendor_name), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
             self.set_font("helvetica", 'I', 10)
             self.cell(0, 5, text=f"Period: {self.week_str}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            
+            # Start table 55mm down to clear the larger logo
             self.set_y(55)
+        else:
+            self.set_y(10)
 
 st.set_page_config(page_title="GetEazy Settlement", page_icon="🚀")
 st.title("GetEazy Settlement Portal")
@@ -143,5 +154,6 @@ if uploaded_file is not None:
                 pdf.cell(w[5], 10, text=f"{net:.2f}", border=1, fill=True, align='R')
 
                 zip_file.writestr(f"{clean_v}_Settlement.pdf", pdf.output())
+
 
         st.download_button("Click here to Download ZIP", data=zip_buffer.getvalue(), file_name="Settlements.zip")
