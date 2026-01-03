@@ -55,28 +55,35 @@ class SettlementPDF(FPDF):
         self.vendor_name = clean_text(vendor_name)
         self.week_str = week_str
 def header(self):
-    # Modern way to handle transparency
-    if os.path.exists('watermark.png'):
-        try:
-            # fill_opacity=0.35 makes the image 35% visible
-            with self.local_context(fill_opacity=0.35):
+        # High-Visibility Watermark (Modern Transparency Method)
+        if os.path.exists('watermark.png'):
+            try:
+                # This 'with' block applies transparency ONLY to the watermark
+                with self.local_context(fill_opacity=0.35):
+                    self.image('watermark.png', x=55, y=100, w=100)
+            except (AttributeError, TypeError):
+                # Fallback if the library version behaves unexpectedly
                 self.image('watermark.png', x=55, y=100, w=100)
-        except AttributeError:
-            # Fallback if the library version is extremely old or unusual
-            self.image('watermark.png', x=55, y=100, w=100)
 
-    if self.page_no() == 1:
-        if os.path.exists('logo.png'):
-            self.image('logo.png', x=10, y=10, w=70)
-        
-        self.set_y(15)
-        self.set_font("helvetica", 'B', 14)
-        self.cell(0, 8, text="VENDOR SETTLEMENT", align='R', new_x="LMARGIN", new_y="NEXT")
-        
-        # Start table below the logo
-        self.set_y(55)
-    else:
-        self.set_y(10)
+        # Main Page Header Logic
+        if self.page_no() == 1:
+            if os.path.exists('logo.png'):
+                # Logo 70mm width (2x size)
+                self.image('logo.png', x=10, y=10, w=70)
+            
+            self.set_y(15)
+            self.set_font("helvetica", 'B', 14)
+            self.cell(0, 8, text="VENDOR SETTLEMENT", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            self.set_font("helvetica", 'B', 11)
+            # self.vendor_name is already cleaned in __init__
+            self.cell(0, 6, text=self.vendor_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            self.set_font("helvetica", 'I', 10)
+            self.cell(0, 5, text=f"Period: {self.week_str}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            
+            # Start table 55mm down to clear the larger logo
+            self.set_y(55)
+        else:
+            self.set_y(10)
 
 st.set_page_config(page_title="GetEazy Settlement", page_icon="🚀")
 st.title("GetEazy Settlement Portal")
@@ -151,6 +158,7 @@ if uploaded_file is not None:
 
 
         st.download_button("Click here to Download ZIP", data=zip_buffer.getvalue(), file_name="Settlements.zip")
+
 
 
 
