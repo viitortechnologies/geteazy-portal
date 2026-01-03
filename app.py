@@ -54,21 +54,21 @@ class SettlementPDF(FPDF):
         super().__init__(*args, **kwargs)
         self.vendor_name = clean_text(vendor_name)
         self.week_str = week_str
-
-   def header(self):
-        # --- MODERN TRANSPARENCY FIX ---
+def header(self):
+        # 1. High-Visibility Watermark (Modern Transparency Method)
         if os.path.exists('watermark.png'):
             try:
-                # Use local_context for transparency (35% opacity)
+                # This 'with' block handles the transparency safely
                 with self.local_context(fill_opacity=0.35):
                     self.image('watermark.png', x=55, y=100, w=100)
-            except (AttributeError, TypeError):
-                # Fallback: draw solid image if transparency is not supported
+            except AttributeError:
+                # If the library version is different, it will skip transparency to prevent crash
                 self.image('watermark.png', x=55, y=100, w=100)
 
+        # 2. Main Page Header Logic
         if self.page_no() == 1:
             if os.path.exists('logo.png'):
-                # Logo 70mm width (2x size)
+                # Logo 70mm width
                 self.image('logo.png', x=10, y=10, w=70)
             
             self.set_y(15)
@@ -79,9 +79,10 @@ class SettlementPDF(FPDF):
             self.set_font("helvetica", 'I', 10)
             self.cell(0, 5, text=f"Period: {self.week_str}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
             
-            # Ensures table starts below the large logo
+            # Ensure the table starts below the logo (y=55)
             self.set_y(55)
         else:
+            # Margin for subsequent pages
             self.set_y(10)
 
 st.set_page_config(page_title="GetEazy Settlement", page_icon="🚀")
@@ -157,4 +158,5 @@ if uploaded_file is not None:
 
 
         st.download_button("Click here to Download ZIP", data=zip_buffer.getvalue(), file_name="Settlements.zip")
+
 
