@@ -118,9 +118,17 @@ if uploaded_file:
             pdf.cell(sum(w[:5]), 8, text="NET PAYABLE:", align='R')
             pdf.cell(w[5], 8, text=f"{net_payable:.2f}", border=1, align='R')
 
-            # Save PDF to ZIP
-            pdf_str = pdf.output()
-            zf.writestr(f"{clean_v}_Settlement.pdf", pdf_str)
+            # Save PDF to ZIP (Fixed AttributeError)
+            pdf_bytes = pdf.output()
+            zf.writestr(f"{clean_v}_Settlement.pdf", pdf_bytes)
+
+            # ADDED: Also save a Summary Excel for each vendor in the ZIP
+            excel_buffer = io.BytesIO()
+            v_df.drop(columns=['Final_Rate', 'is_cancelled']).to_excel(excel_buffer, index=False)
+            zf.writestr(f"{clean_v}_Summary.xlsx", excel_buffer.getvalue())
+
+    # IMPORTANT: Reset buffer position so Streamlit can read it
+    zip_buffer.seek(0)
 
     st.success("✅ All Settlements Processed!")
     st.download_button(
