@@ -119,7 +119,7 @@ if uploaded_file:
             pdf.cell(w[5], 8, text=f"{net_payable:.2f}", border=1, align='R')
 
             # Save PDF to ZIP
-            pdf_str = pdf.output(dest='S').encode('latin-1')
+            pdf_str = pdf.output()
             zf.writestr(f"{clean_v}_Settlement.pdf", pdf_str)
 
     st.success("✅ All Settlements Processed!")
