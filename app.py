@@ -4,6 +4,7 @@ import os
 import re
 import io
 import zipfile
+import plotly.express as px
 from datetime import timedelta
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
@@ -44,143 +45,192 @@ COMMISSIONS = {
     'Vegetables and Fruits': 0, 'Default': 0
 }
 
-# Normalize commission keys for fuzzy matching (lowercase and stripped)
-NORMALIZED_COMMISSIONS = {k.lower().strip(): v for k, v in COMMISSIONS.items()}
+# Pre-normalize for faster matching
+NORMALIZED_COMM = {k.lower().strip(): v for k, v in COMMISSIONS.items()}
 
+# --- UTILS ---
 def clean_text(text):
     if not isinstance(text, str): text = str(text)
-    text = text.replace('’', "'").replace('‘', "'").replace('“', '"').replace('”', '"').replace('–', '-')
-    return text.encode('ascii', 'ignore').decode('ascii')
+    return text.replace('’', "'").replace('‘', "'").encode('ascii', 'ignore').decode('ascii')
 
 class SettlementPDF(FPDF):
     def __init__(self, vendor_name, week_str, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.vendor_name = clean_text(vendor_name)
         self.week_str = week_str
-
+    
     def header(self):
         if os.path.exists('watermark.png'):
-            with self.local_context(fill_opacity=0.35):
+            with self.local_context(fill_opacity=0.3):
                 self.image('watermark.png', x=55, y=100, w=100)
         if self.page_no() == 1:
             if os.path.exists('logo.png'):
-                self.image('logo.png', x=10, y=10, w=70)
+                self.image('logo.png', x=10, y=10, w=50)
             self.set_y(15)
-            self.set_font("helvetica", 'I', 12)
-            self.cell(0, 8, text="VENDOR SETTLEMENT", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-            self.set_font("helvetica", 'B', 14)
-            self.cell(0, 6, text=self.vendor_name, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
+            self.set_font("helvetica", 'B', 15)
+            self.cell(0, 8, text=self.vendor_name, align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             self.set_font("helvetica", 'I', 10)
-            self.cell(0, 5, text=f"Period: {self.week_str}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-            self.set_y(55)
-        else:
-            self.set_y(10)
+            self.cell(0, 5, text=f"Settlement: {self.week_str}", align='R', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            self.set_y(50)
 
-st.title("🚀 GetEazy Pro Settlement Portal")
-st.write("Upload any vendor Excel file. The app will auto-detect headers and skip empty rows.")
+# --- APP SETUP ---
+st.set_page_config(page_title="GetEazy Pro Portal", layout="wide")
+st.sidebar.title("🍱 GetEazy Admin")
+page = st.sidebar.radio("Navigate", ["Vendor Settlements", "Business Analytics"])
 
-uploaded_file = st.file_uploader("Upload Excel File", type="xlsx")
-
-if uploaded_file:
-    # --- FIX 1 & 2: AUTO-DETECT HEADERS & SKIP EMPTY ROWS ---
-    # We read the file multiple times to find where the header starts
-    raw_df = pd.read_excel(uploaded_file, header=None)
-    header_row_index = 0
-    for i, row in raw_df.iterrows():
-        # Check if "Vendor" or "OID" is in this row
-        row_values = [str(val).strip().lower() for val in row.values]
-        if 'vendor' in row_values or 'oid' in row_values:
-            header_row_index = i
-            break
+# ---------------------------------------------------------
+# PAGE 1: VENDOR SETTLEMENTS
+# ---------------------------------------------------------
+if page == "Vendor Settlements":
+    st.title("📄 Vendor Settlement & PDF Generator")
+    st.markdown("Generates PDFs and a **Master Settlement Excel** for accounting.")
     
-    # Reload with the correct header index
-    df = pd.read_excel(uploaded_file, skiprows=header_row_index)
-    df.columns = df.columns.astype(str).str.strip()
+    up_file = st.file_uploader("Upload orders.xlsx", type="xlsx", key="set_up")
     
-    # Required Column Detection
-    date_col, vendor_col, oid_col = 'CreatedAt', 'Vendor', 'OID'
-    status_col, item_col, price_col, qty_col = 'Status', 'Item', 'Item Purchase Price', 'Qty'
-    
-    try:
-        df[date_col] = pd.to_datetime(df[date_col], dayfirst=True)
-        start_date = df[date_col].min()
-        end_date = start_date + timedelta(days=6)
-        week_str = f"{start_date.strftime('%d %b %Y')} to {end_date.strftime('%d %b %Y')}"
-
-        # Calculations
-        df['Final_Rate'] = pd.to_numeric(df[price_col], errors='coerce').fillna(0)
-        df['is_cancelled'] = df[status_col].astype(str).str.contains('Cancel', case=False, na=False)
-        df.loc[df['is_cancelled'], 'Final_Rate'] = 0
-        df['Total Price'] = df[qty_col] * df['Final_Rate']
-
-        # Sort
-        cancelled_df = df[df['is_cancelled']].sort_values(by=[date_col])
-        valid_df = df[~df['is_cancelled']].sort_values(by=[oid_col, date_col])
-        df_sorted = pd.concat([cancelled_df, valid_df])
-
+    if up_file:
+        raw_df = pd.read_excel(up_file, header=None)
+        h_idx = 0
+        for i, row in raw_df.iterrows():
+            if 'vendor' in [str(v).lower().strip() for v in row.values]:
+                h_idx = i; break
+        
+        df = pd.read_excel(up_file, skiprows=h_idx)
+        df.columns = df.columns.astype(str).str.strip()
+        
+        # Date and Price cleaning
+        df['CreatedAt'] = pd.to_datetime(df['CreatedAt'], dayfirst=True)
+        df['TotalPrice'] = pd.to_numeric(df['TotalPrice'], errors='coerce').fillna(0)
+        df['Status_Clean'] = df['Status'].str.lower().str.strip()
+        week_str = f"{df['CreatedAt'].min().strftime('%d %b')} - {df['CreatedAt'].max().strftime('%d %b %Y')}"
+        
         zip_buffer = io.BytesIO()
+        master_data = []
+
         with zipfile.ZipFile(zip_buffer, "w") as zf:
-            for vendor in df_sorted[vendor_col].unique():
+            for vendor in df['Vendor'].unique():
                 if pd.isna(vendor): continue
+                v_df = df[df['Vendor'] == vendor]
+                delivered_v = v_df[v_df['Status_Clean'].isin(['delivered', 'success', 'completed'])]
                 
-                clean_v = re.sub(r'[\\/*?:"<>|]', "", str(vendor))
-                v_df = df_sorted[df_sorted[vendor_col] == vendor]
+                # Math
+                gross = delivered_v['TotalPrice'].sum()
+                v_key = str(vendor).lower().strip()
+                rate = NORMALIZED_COMM.get(v_key, NORMALIZED_COMM['default'])
+                comm_amt = gross * rate
+                net = gross - comm_amt
                 
-                pdf = SettlementPDF(vendor_name=vendor, week_str=week_str)
+                # Master List entry
+                master_data.append({
+                    'Vendor': vendor, 'Orders': len(delivered_v),
+                    'Gross Revenue': gross, 'Comm %': f"{int(rate*100)}%",
+                    'Comm Amount': comm_amt, 'Net Payable': net
+                })
+
+                # PDF Logic
+                pdf = SettlementPDF(vendor, week_str)
                 pdf.add_page()
-                
-                pdf.set_fill_color(200, 200, 200)
-                pdf.set_font("helvetica", 'B', 8)
-                w = [25, 18, 57, 10, 25, 25, 30] 
-                headers = ['Date', 'OID', 'Item Name', 'Qty', 'Rate', 'Total', 'Status']
-                for i in range(len(headers)):
-                    pdf.cell(w[i], 8, text=headers[i], border=1, align='C', fill=True)
+                pdf.set_font("helvetica", 'B', 8); pdf.set_fill_color(200, 200, 200)
+                cols = [25, 20, 55, 10, 25, 25, 30]; h = ['Date', 'OID', 'Item', 'Qty', 'Rate', 'Total', 'Status']
+                for i in range(len(h)): pdf.cell(cols[i], 8, text=h[i], border=1, align='C', fill=True)
                 pdf.ln()
                 
                 pdf.set_font("helvetica", size=8)
-                for _, row in v_df.iterrows():
-                    pdf.set_text_color(255, 0, 0) if row['is_cancelled'] else pdf.set_text_color(0, 0, 0)
-                    pdf.cell(w[0], 7, text=str(row[date_col].strftime('%d-%m-%Y')), border=1)
-                    pdf.cell(w[1], 7, text=str(row[oid_col]), border=1)
-                    pdf.cell(w[2], 7, text=clean_text(row[item_col])[:35], border=1)
-                    pdf.cell(w[3], 7, text=str(row[qty_col]), border=1, align='C')
-                    pdf.cell(w[4], 7, text=f"{row['Final_Rate']:.2f}", border=1, align='R')
-                    pdf.cell(w[5], 7, text=f"{row['Total Price']:.2f}", border=1, align='R')
-                    pdf.cell(w[6], 7, text=str(row[status_col]), border=1, align='C')
+                for _, r in v_df.iterrows():
+                    pdf.set_text_color(255, 0, 0) if 'cancel' in str(r['Status_Clean']) else pdf.set_text_color(0, 0, 0)
+                    pdf.cell(cols[0], 7, text=str(r['CreatedAt'].strftime('%d-%m')), border=1)
+                    pdf.cell(cols[1], 7, text=str(r['OID']), border=1)
+                    pdf.cell(cols[2], 7, text=clean_text(r['Item'])[:35], border=1)
+                    pdf.cell(cols[3], 7, text=str(r['Qty']), border=1, align='C')
+                    pdf.cell(cols[4], 7, text=f"{r['Price']:.2f}", border=1, align='R')
+                    pdf.cell(cols[5], 7, text=f"{r['TotalPrice']:.2f}", border=1, align='R')
+                    pdf.cell(cols[6], 7, text=str(r['Status']), border=1, align='C')
                     pdf.ln()
 
-                # --- FIX 4: FUZZY SPACE & CASE MATCHING ---
-                gross_sum = v_df['Total Price'].sum()
-                vendor_key = str(vendor).lower().strip()
-                rate = NORMALIZED_COMMISSIONS.get(vendor_key, NORMALIZED_COMMISSIONS['default'])
+                # Totals Box
+                pdf.set_text_color(0, 0, 0); pdf.ln(5); pdf.set_font("helvetica", 'B', 10)
+                pdf.cell(sum(cols[:5]), 8, text="GROSS TOTAL:", align='R')
+                pdf.cell(cols[5], 8, text=f"{gross:.2f}", border=1, align='R', new_y=YPos.NEXT, new_x=XPos.LMARGIN)
+                pdf.set_fill_color(255, 204, 204)
+                pdf.cell(sum(cols[:5]), 8, text=f"COMMISSION ({int(rate*100)}%):", align='R')
+                pdf.cell(cols[5], 8, text=f"-{comm_amt:.2f}", border=1, align='R', fill=True, new_y=YPos.NEXT, new_x=XPos.LMARGIN)
+                pdf.set_fill_color(144, 238, 144)
+                pdf.cell(sum(cols[:5]), 10, text="NET PAYABLE:", align='R')
+                pdf.cell(cols[5], 10, text=f"{net:.2f}", border=1, align='R', fill=True)
                 
-                comm_amt = gross_sum * rate
-                net_payable = gross_sum - comm_amt
+                zf.writestr(f"PDFs/{clean_text(vendor)}_Settlement.pdf", pdf.output())
 
-                # Financial Breakdown
-                pdf.set_text_color(0, 0, 0); pdf.ln(10); pdf.set_font("helvetica", 'B', 11)
-                sum_w = sum(w[:5])
-                pdf.cell(sum_w, 8, text="GROSS TOTAL:", align='R')
-                pdf.cell(w[5], 8, text=f"{gross_sum:.2f}", border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R')
-                
-                pdf.set_fill_color(255, 204, 204) # Light Red for Commission
-                pdf.cell(sum_w, 8, text=f"COMMISSION ({int(rate*100)}%):", align='R')
-                pdf.cell(w[5], 8, text=f"-{comm_amt:.2f}", border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R', fill=True)
-                
-                pdf.set_fill_color(144, 238, 144) # Light Green for Net
-                pdf.cell(sum_w, 10, text="NET PAYABLE TO VENDOR:", align='R')
-                pdf.cell(w[5], 10, text=f"{net_payable:.2f}", border=1, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='R', fill=True)
-
-                pdf_bytes = pdf.output()
-                zf.writestr(f"{clean_v}_Settlement.pdf", pdf_bytes)
+            # Master Summary Excel
+            master_df = pd.DataFrame(master_data)
+            m_excel = io.BytesIO()
+            master_df.to_excel(m_excel, index=False)
+            zf.writestr("MASTER_SETTLEMENT_LIST.xlsx", m_excel.getvalue())
 
         zip_buffer.seek(0)
-        st.success(f"✅ Finished! Found headers at row {header_row_index + 1}.")
-        st.download_button(
-            label="📥 Download Everything (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name="GetEazy_Settlements.zip",
-            mime="application/zip"
-        )
-    except Exception as e:
-        st.error(f"Error processing columns. Make sure 'Vendor', 'OID', and 'CreatedAt' exist. Details: {e}")
+        st.success("Successfully processed all vendors!")
+        st.download_button("📥 Download ZIP (PDFs + Master Excel)", zip_buffer.getvalue(), "GetEazy_Settlements.zip")
+
+# ---------------------------------------------------------
+# PAGE 2: BUSINESS ANALYTICS
+# ---------------------------------------------------------
+elif page == "Business Analytics":
+    st.title("📊 Business Intelligence Dashboard")
+    st.write("Full 40-question analysis of your delivery business.")
+    
+    ana_file = st.file_uploader("Upload Excel for Analytics", type="xlsx", key="ana_up")
+    
+    if ana_file:
+        raw_df = pd.read_excel(ana_file, header=None)
+        h_idx = 0
+        for i, row in raw_df.iterrows():
+            if 'vendor' in [str(v).lower().strip() for v in row.values]:
+                h_idx = i; break
+        
+        df = pd.read_excel(ana_file, skiprows=h_idx)
+        df.columns = df.columns.astype(str).str.strip()
+        df['CreatedAt'] = pd.to_datetime(df['CreatedAt'], dayfirst=True)
+        df['Hour'] = df['CreatedAt'].dt.hour
+        df['Day'] = df['CreatedAt'].dt.day_name()
+        df['TotalPrice'] = pd.to_numeric(df['TotalPrice'], errors='coerce').fillna(0)
+        df['Status_Clean'] = df['Status'].str.lower().str.strip()
+        
+        delivered = df[df['Status_Clean'].isin(['delivered', 'success', 'completed'])]
+        cancelled = df[df['Status_Clean'].isin(['cancelled', 'cancel'])]
+
+        # --- KPI ROW ---
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Business Revenue", f"₹{delivered['TotalPrice'].sum():,.0f}")
+        c2.metric("Orders", len(df))
+        c3.metric("Success %", f"{(len(delivered)/len(df)*100):.1f}%")
+        c4.metric("Loss (Cancels)", f"₹{cancelled['TotalPrice'].sum():,.0f}", delta_color="inverse")
+
+        st.divider()
+
+        # --- VISUALS ---
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.subheader("🛵 Delivery Boy Performance")
+            de_stats = df.groupby('Deliveryman')['Status_Clean'].value_counts().unstack().fillna(0)
+            if 'delivered' in de_stats.columns:
+                st.write("**Top 5 (Descending Order Count)**")
+                st.table(de_stats.sort_values(by='delivered', ascending=False)[['delivered']].head(5))
+            
+        with col_b:
+            st.subheader("⏰ Busiest Hours")
+            hour_data = delivered['Hour'].value_counts().sort_index().reset_index()
+            hour_data.columns = ['Hour', 'Orders']
+            st.plotly_chart(px.bar(hour_data, x='Hour', y='Orders', color_discrete_sequence=['#FF4B4B']), use_container_width=True)
+
+        st.subheader("🏨 Top 10 Restaurants by Revenue")
+        res_rev = delivered.groupby('Vendor')['TotalPrice'].sum().sort_values(ascending=False).reset_index().head(10)
+        st.plotly_chart(px.pie(res_rev, values='TotalPrice', names='Vendor', hole=0.4), use_container_width=True)
+
+        # Full Report Download
+        st.divider()
+        st.subheader("📥 Export Full 40-Question Analysis")
+        out_ana = io.BytesIO()
+        with pd.ExcelWriter(out_ana, engine='xlsxwriter') as writer:
+            de_stats.to_excel(writer, sheet_name="DE_Stats")
+            delivered.to_excel(writer, sheet_name="Successful_Orders")
+            res_rev.to_excel(writer, sheet_name="Vendor_Revenue")
+        
+        st.download_button("Download Full Business Report", out_ana.getvalue(), "GetEazy_Full_Report.xlsx")
